@@ -1,9 +1,7 @@
 package uk.cloudmc.microwavedram.tag;
 
 import net.luckperms.api.LuckPerms;
-import net.luckperms.api.model.group.Group;
 import net.luckperms.api.model.user.User;
-import net.luckperms.api.node.Node;
 import net.luckperms.api.node.types.InheritanceNode;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
@@ -15,6 +13,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.UUID;
 import java.util.logging.Logger;
@@ -75,7 +74,7 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
 
         if (user == null) {
             logger.warning("Could not find LP User " + player.getUniqueId());
-        };
+        }
 
         if (tagged) {
             getConfig().set("tagged_players." + id, true);
@@ -90,7 +89,7 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+    public boolean onCommand(@NotNull CommandSender sender, Command command, @NotNull String label, String[] args) {
         if (command.getName().equalsIgnoreCase("tag")) {
 
             if (!sender.hasPermission("tagplugin.tag")) {
