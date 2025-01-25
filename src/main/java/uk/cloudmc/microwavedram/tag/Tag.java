@@ -92,7 +92,7 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
     public boolean onCommand(@NotNull CommandSender sender, Command command, @NotNull String label, String[] args) {
         if (command.getName().equalsIgnoreCase("tag")) {
 
-            if (!sender.hasPermission("tagplugin.tag")) {
+            if (!sender.hasPermission("tag.tag")) {
                 sender.sendMessage("You do not have permission to use this command.");
                 return true;
             }
