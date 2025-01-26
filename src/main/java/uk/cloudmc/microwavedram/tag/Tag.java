@@ -4,6 +4,8 @@ import net.luckperms.api.LuckPerms;
 import net.luckperms.api.model.user.User;
 import net.luckperms.api.node.types.InheritanceNode;
 import org.bukkit.Bukkit;
+import org.bukkit.Color;
+import org.bukkit.Particle;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -15,6 +17,7 @@ import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.HashMap;
 import java.util.UUID;
 import java.util.logging.Logger;
 
@@ -27,6 +30,21 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
                 if (!isTagged(attacker)) return;
                 if (isTagged(damaged)) return;
 
+                if (resetTimes.containsKey(damaged.getUniqueId())) {
+                    if (resetTimes.get(damaged.getUniqueId()) > System.currentTimeMillis()) {
+                        attacker.sendMessage(String.format("You cannot tag this player for another %.0f secconds", (float) (resetTimes.get(damaged.getUniqueId()) - System.currentTimeMillis()) / 1000f));
+                        return;
+                    }
+                }
+
+                resetTimes.put(attacker.getUniqueId(), System.currentTimeMillis() + resetTime);
+
+                Particle.DustTransition transition = new Particle.DustTransition(Color.fromRGB(255, 0, 0), Color.fromRGB(255, 255, 255), 1.0F);
+
+                damaged.getWorld().spawnParticle(Particle.DUST_COLOR_TRANSITION, damaged.getLocation(), 100, .2f, .4f, .2f, transition);
+                damaged.sendMessage(String.format("§aYou have been tagged by %s", attacker.getName()));
+                attacker.sendMessage(String.format("§aYou have tagged %s", damaged.getName()));
+
                 setTagged(attacker, false);
                 setTagged(damaged, true);
             }
@@ -34,6 +52,8 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
     }
 
     private static final Logger logger = Logger.getLogger("Tag");
+    private static long resetTime;
+    private static final HashMap<UUID, Long> resetTimes = new HashMap<>();
     private static LuckPerms luckPerms;
 
     @Override
@@ -59,6 +79,8 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
                 }
             }
         }
+
+        resetTime = getConfig().getInt("reset_time");
     }
 
     public boolean isTagged(Player player) {
