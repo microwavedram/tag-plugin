@@ -7,6 +7,6 @@ folia-supported: true
 
 commands:
   tag:
-    description: Toggle the tag of a player
+    description: Toggle the tag state of a player
     usage: "/tag <player>"
     permission: tag.tag   

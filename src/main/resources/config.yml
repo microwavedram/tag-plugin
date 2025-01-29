@@ -1,1 +1,7 @@
+database:
+  server: "jdbc:mysql://localhost:3306/database"
+  user: ""
+  password: ""
+
+# (ms)
 reset_time: 1200000

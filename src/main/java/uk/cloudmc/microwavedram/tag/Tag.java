@@ -16,28 +16,32 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
+import org.slf4j.LoggerFactory;
 
+import java.sql.*;
 import java.util.HashMap;
 import java.util.UUID;
 import java.util.logging.Logger;
 
 public final class Tag extends JavaPlugin implements CommandExecutor {
 
+    private static final org.slf4j.Logger log = LoggerFactory.getLogger(Tag.class);
+
     class EventListener implements Listener {
         @EventHandler
-        public void onPlayerHit(EntityDamageByEntityEvent event) {
+        public void onPlayerHit(EntityDamageByEntityEvent event) throws SQLException {
             if (event.getEntity() instanceof Player damaged && event.getDamager() instanceof Player attacker) {
                 if (!isTagged(attacker)) return;
                 if (isTagged(damaged)) return;
 
-                if (resetTimes.containsKey(damaged.getUniqueId())) {
-                    if (resetTimes.get(damaged.getUniqueId()) > System.currentTimeMillis()) {
-                        attacker.sendMessage(String.format("You cannot tag this player for another %.0f secconds", (float) (resetTimes.get(damaged.getUniqueId()) - System.currentTimeMillis()) / 1000f));
-                        return;
-                    }
-                }
-
-                resetTimes.put(attacker.getUniqueId(), System.currentTimeMillis() + resetTime);
+//                if (resetTimes.containsKey(damaged.getUniqueId())) {
+//                    if (resetTimes.get(damaged.getUniqueId()) > System.currentTimeMillis()) {
+//                        attacker.sendMessage(String.format("You cannot tag this player for another %.0f secconds", (float) (resetTimes.get(damaged.getUniqueId()) - System.currentTimeMillis()) / 1000f));
+//                        return;
+//                    }
+//                }
+//
+//                resetTimes.put(attacker.getUniqueId(), System.currentTimeMillis() + resetTime);
 
                 Particle.DustTransition transition = new Particle.DustTransition(Color.fromRGB(255, 0, 0), Color.fromRGB(255, 255, 255), 1.0F);
 
@@ -45,21 +49,23 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
                 damaged.sendMessage(String.format("§aYou have been tagged by %s", attacker.getName()));
                 attacker.sendMessage(String.format("§aYou have tagged %s", damaged.getName()));
 
-                setTagged(attacker, false);
-                setTagged(damaged, true);
+                try {
+                    setTagged(attacker, false);
+                    setTagged(damaged, true);
+                } catch (SQLException e) {
+                    throw new RuntimeException(e);
+                }
             }
         }
     }
 
     private static final Logger logger = Logger.getLogger("Tag");
     private static long resetTime;
-    private static final HashMap<UUID, Long> resetTimes = new HashMap<>();
     private static LuckPerms luckPerms;
+    private static Connection connection;
 
     @Override
     public void onEnable() {
-
-        logger.info("Hello!");
 
         this.saveDefaultConfig();
 
@@ -71,25 +77,72 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
             luckPerms = provider.getProvider();
         }
 
-        if (getConfig().contains("tagged_players")) {
-            for (String id : getConfig().getConfigurationSection("tagged_players").getKeys(false)) {
-                Player player = Bukkit.getPlayer(UUID.fromString(id));
-                if (player != null && getConfig().getBoolean("tagged_players." + id)) {
-                    setTagged(player, true); // Reapply tag to the player
+        resetTime = getConfig().getInt("reset_time");
+
+        String db_server = getConfig().getString("database.server");
+        String db_user = getConfig().getString("database.user");
+        String db_password = getConfig().getString("database.password");
+
+        try {
+            assert db_server != null;
+            connection = DriverManager.getConnection(db_server, db_user, db_password);
+
+            Statement statement = connection.createStatement();
+            statement.execute("CREATE TABLE IF NOT EXISTS tag_state_mirror(uuid CHAR(36) PRIMARY KEY, tagged BOOLEAN NOT NULL DEFAULT FALSE) ENGINE=MEMORY;");
+            statement.execute("CREATE TABLE IF NOT EXISTS tag_state(uuid CHAR(36) PRIMARY KEY, tagged BOOLEAN NOT NULL DEFAULT FALSE);");
+            statement.execute("CREATE TABLE IF NOT EXISTS tag_cooldown_expire(uuid CHAR(36) PRIMARY KEY, cooldown_end  BIGINT NOT NULL);");
+
+            statement.execute("""
+                        DELIMITER $$
+                        CREATE PROCEDURE persist_tag_state()
+                        BEGIN
+                            REPLACE INTO tag_state (uuid, tagged)
+                            SELECT uuid, tagged FROM tag_state_mirror;
+                        END $$
+                        DELIMITER ;
+                    """);
+
+            statement.execute("""
+                        DELIMITER $$
+                        CREATE TRIGGER after_tag_state_insert_update
+                        AFTER INSERT ON tag_state
+                        FOR EACH ROW
+                        BEGIN
+                            REPLACE INTO tag_state_mirror (uuid, tagged)
+                            VALUES (NEW.uuid, NEW.tagged);
+                        END $$
+                        DELIMITER ;
+                    """);
+
+        } catch (SQLException e) {
+            logger.warning("Failed to connect to TagPlugin Database");
+        } catch (AssertionError e) {
+            logger.warning("Database config failure " + e.getMessage());
+        }
+
+    }
+
+    public static boolean isTagged(Player player) throws SQLException {
+        String query = "SELECT COALESCE((SELECT tagged FROM tag_state_mirror WHERE uuid = ?), FALSE) AS tagged_value";
+
+        try (PreparedStatement statement = connection.prepareStatement(query)) {
+            statement.setString(1, player.getUniqueId().toString());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (resultSet.next()) {
+                    return resultSet.getBoolean("tagged_value");
                 }
             }
         }
 
-        resetTime = getConfig().getInt("reset_time");
+        return false;
     }
 
-    public boolean isTagged(Player player) {
-        return getConfig().getBoolean("tagged_players." + player.getUniqueId(), false);
-    }
-
-    // Helper method to set the tagged status of a player
-    public void setTagged(Player player, boolean tagged) {
-        String id = player.getUniqueId().toString();
+    public void setTagged(Player player, boolean tagged) throws SQLException {
+        String query = """
+            INSERT INTO tag_state (uuid, tagged)
+            VALUES (?, ?)
+            ON DUPLICATE KEY UPDATE tagged = VALUES(tagged);
+        """;
 
         InheritanceNode node = InheritanceNode.builder("tagged").build();
         User user = luckPerms.getUserManager().getUser(player.getUniqueId());
@@ -99,15 +152,26 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
         }
 
         if (tagged) {
-            getConfig().set("tagged_players." + id, true);
             user.data().add(node);
         } else {
-            getConfig().set("tagged_players." + id, null);
             user.data().remove(node);
         }
-
         luckPerms.getUserManager().saveUser(user);
-        saveConfig();
+
+
+        try (PreparedStatement statement = connection.prepareStatement(query)) {
+            statement.setString(1, player.getUniqueId().toString());
+            statement.setBoolean(2, tagged);
+            statement.executeUpdate();
+        }
+
+        String updateMirrorQuery = "REPLACE INTO tag_state_mirror (uuid, tagged) VALUES (?, ?)";
+        try (PreparedStatement statement = connection.prepareStatement(updateMirrorQuery)) {
+            statement.setString(1, player.getUniqueId().toString());
+            statement.setBoolean(2, tagged);
+            statement.executeUpdate();
+        }
+
     }
 
     @Override
@@ -130,16 +194,20 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
                 return true;
             }
 
-            boolean isTagged = isTagged(target);
-            setTagged(target, !isTagged);
+            try {
+                boolean isTagged = isTagged(target);
+                setTagged(target, !isTagged);
 
-            if (isTagged) {
-                sender.sendMessage(String.format("%s is now not tagged", target.getName()));
-            } else {
-                sender.sendMessage(String.format("%s is now tagged", target.getName()));
+                if (isTagged) {
+                    sender.sendMessage(String.format("%s is now not tagged", target.getName()));
+                } else {
+                    sender.sendMessage(String.format("%s is now tagged", target.getName()));
+                }
+
+                return true;
+            } catch (SQLException e) {
+                sender.sendMessage("Failed to change tag state. " + e);
             }
-
-            return true;
         }
 
         return false;
