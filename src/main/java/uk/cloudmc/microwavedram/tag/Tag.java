@@ -16,16 +16,11 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
-import org.slf4j.LoggerFactory;
 
 import java.sql.*;
-import java.util.HashMap;
-import java.util.UUID;
 import java.util.logging.Logger;
 
 public final class Tag extends JavaPlugin implements CommandExecutor {
-
-    private static final org.slf4j.Logger log = LoggerFactory.getLogger(Tag.class);
 
     class EventListener implements Listener {
         @EventHandler
@@ -34,14 +29,30 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
                 if (!isTagged(attacker)) return;
                 if (isTagged(damaged)) return;
 
-//                if (resetTimes.containsKey(damaged.getUniqueId())) {
-//                    if (resetTimes.get(damaged.getUniqueId()) > System.currentTimeMillis()) {
-//                        attacker.sendMessage(String.format("You cannot tag this player for another %.0f secconds", (float) (resetTimes.get(damaged.getUniqueId()) - System.currentTimeMillis()) / 1000f));
-//                        return;
-//                    }
-//                }
-//
-//                resetTimes.put(attacker.getUniqueId(), System.currentTimeMillis() + resetTime);
+                long refresh_time = 0;
+
+                PreparedStatement query = connection.prepareStatement("SELECT cooldown_end FROM tag_cooldown_expire WHERE uuid = ?");
+                query.setString(1, damaged.getUniqueId().toString());
+
+                try (ResultSet rs = query.executeQuery()) {
+                    if (rs.next()) {
+                        refresh_time = rs.getLong("cooldown_end");
+                    }
+                }
+
+                if (refresh_time > System.currentTimeMillis()) {
+                    attacker.sendMessage(String.format("You cannot tag this player for another %.0f secconds", (float) (refresh_time - System.currentTimeMillis()) / 1000f));
+                    return;
+                }
+
+                PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO tag_cooldown_expire (uuid, cooldown_end)
+                    VALUES (?, ?)
+                    ON DUPLICATE KEY UPDATE cooldown_end = VALUES(cooldown_end);
+                """);
+                statement.setString(1, attacker.getUniqueId().toString());
+                statement.setLong(2, System.currentTimeMillis() + resetTime);
+                statement.execute();
 
                 Particle.DustTransition transition = new Particle.DustTransition(Color.fromRGB(255, 0, 0), Color.fromRGB(255, 255, 255), 1.0F);
 
@@ -88,7 +99,7 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
             connection = DriverManager.getConnection(db_server, db_user, db_password);
 
             Statement statement = connection.createStatement();
-            statement.execute("CREATE TABLE IF NOT EXISTS tag_state_mirror(uuid CHAR(36) PRIMARY KEY, tagged BOOLEAN NOT NULL DEFAULT FALSE) ENGINE=MEMORY;");
+            statement.execute("CREATE TABLE IF NOT EXISTS tag_state_mirror(uuid CHAR(36) PRIMARY KEY, tagged BOOLEAN NOT NULL DEFAULT FALSE) ENGINE=MEMORY;"); // Using memory table as the check for "isTagged" occurs often
             statement.execute("CREATE TABLE IF NOT EXISTS tag_state(uuid CHAR(36) PRIMARY KEY, tagged BOOLEAN NOT NULL DEFAULT FALSE);");
             statement.execute("CREATE TABLE IF NOT EXISTS tag_cooldown_expire(uuid CHAR(36) PRIMARY KEY, cooldown_end  BIGINT NOT NULL);");
 
@@ -214,7 +225,5 @@ public final class Tag extends JavaPlugin implements CommandExecutor {
     }
 
     @Override
-    public void onDisable() {
-
-    }
+    public void onDisable() {}
 }
